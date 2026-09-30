@@ -1,0 +1,16 @@
+# Local Galois build
+build/
+
+# Downloaded MTX and converted Galois graphs
+dataset/
+
+# Benchmark outputs
+results/
+
+# Local fmt bootstrap (apt libfmt-dev is missing)
+third_party/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
