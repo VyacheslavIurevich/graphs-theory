@@ -1,3 +1,6 @@
 [submodule "task1/spla-bench"]
 	path = task1/spla-bench
 	url = git@github.com:VyacheslavIurevich/spla-bench.git
+[submodule "task2/deps/Galois"]
+	path = task2/deps/Galois
+	url = git@github.com:IntelligentSoftwareSystems/Galois.git
