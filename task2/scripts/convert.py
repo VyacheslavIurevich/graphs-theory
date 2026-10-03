@@ -57,7 +57,7 @@ def mtx_to_edgelist(mtx: Path, edgelist: Path, *, weighted: bool) -> None:
     """Write a 0-based Galois edgelist, expanding a symmetric MTX once."""
     if edgelist.exists() and edgelist.stat().st_size > 0:
         return
-    symmetric, n_vertices, _ = _parse_mtx_header(mtx)
+    symmetric, _n_vertices, _ = _parse_mtx_header(mtx)
     log("convert", "mtx2edgelist", mtx.name, "symmetric=" + str(symmetric))
     edgelist.parent.mkdir(parents=True, exist_ok=True)
     written = 0
@@ -89,19 +89,14 @@ def mtx_to_edgelist(mtx: Path, edgelist: Path, *, weighted: bool) -> None:
                 else:
                     dst.write(f"{dst_id} {src_id}\n")
                 written += 1
-        # edgelist2gr infers |V| = max(id)+1. Pad a skipped self-loop so
-        # trailing isolated vertices from the MTX header are not dropped.
-        if n_vertices > 0 and max_id + 1 < n_vertices:
-            last = n_vertices - 1
-            if weighted:
-                dst.write(f"{last} {last} 1\n")
-            else:
-                dst.write(f"{last} {last}\n")
-            log("convert", "mtx2edgelist", f"padded isolated vertex {last}")
+        # edgelist2gr infers |V| = max(id)+1. Do not pad trailing isolates
+        # with a self-loop: DistTC's MiningPartitioner asserts
+        # globalKeptEdges*2 == |E| and a loop makes |E| odd. Isolated
+        # trailing vertices do not change BFS/SSSP/TC answers.
     log("convert", "mtx2edgelist", f"wrote {written} directed edges")
 
 
-def convert_dataset(name: str, mtx: Path) -> ConvertedGraph:
+def convert_dataset(name: str, mtx: Path, *, force: bool = False) -> ConvertedGraph:
     base = config.DATASET_DIR / name / name
     graph = ConvertedGraph(
         name=name,
@@ -113,6 +108,11 @@ def convert_dataset(name: str, mtx: Path) -> ConvertedGraph:
         sgr=base.with_suffix(".sgr"),
     )
     spec = config.DATASETS[name]
+    if force and spec.tc:
+        for leftover in (base.with_suffix(".sgr"), base.with_suffix(".cgr")):
+            if leftover.exists():
+                leftover.unlink()
+                log("convert", "removed", leftover.name)
 
     el = base.with_suffix(".el")
     wel = base.with_suffix(".wel")
@@ -133,10 +133,12 @@ def convert_dataset(name: str, mtx: Path) -> ConvertedGraph:
     if spec.tc:
         cleaned = base.with_suffix(".cgr")
         if not (graph.sgr.exists() and graph.sgr.stat().st_size > 0):
-            _convert("gr2cgr", graph.gr, cleaned, ["-edgeType=void"])
-            # Symmetric MTX is already expanded in the edgelist. gr2sgr would
-            # duplicate every edge. Directed graphs are not used for TC.
-            graph.sgr.write_bytes(cleaned.read_bytes())
+            # Copy the already-symmetric .gr. gr2cgr can leave an odd |E|
+            # (self-loop / orientation) and DistTC then SIGABRTs.
+            graph.sgr.write_bytes(graph.gr.read_bytes())
+            log("convert", "sgr", "copied .gr (symmetric, no gr2cgr)")
+            if cleaned.exists():
+                cleaned.unlink()
 
     _write_source_cache(graph, spec)
     # Text edgelists of Orkut-scale graphs are several GiB. The .gr family is enough.
@@ -152,11 +154,39 @@ def _write_source_cache(graph: ConvertedGraph, spec: config.DatasetSpec) -> None
     if spec.source is not None:
         cache.write_text(str(spec.source) + "\n")
         return
+    if spec.directed and spec.family == "citation":
+        # Median out-degree on cit-Patents landed in a 26-vertex out-component.
+        source = pick_max_out_from_mtx(graph.mtx)
+        cache.write_text(str(source) + "\n")
+        log("convert", "source", graph.name, source, "(max out-degree)")
+        return
     if cache.exists() and cache.stat().st_size > 0:
         return
     source = pick_source_from_edgelist(graph.gr.with_suffix(".el"))
     cache.write_text(str(source) + "\n")
     log("convert", "source", graph.name, source)
+
+
+def pick_max_out_from_mtx(mtx: Path) -> int:
+    """0-based vertex with the largest out-degree in the MTX (no symmetrize)."""
+    outdeg: dict[int, int] = {}
+    with mtx.open() as handle:
+        for line in handle:
+            if line.startswith("%"):
+                continue
+            break
+        for line in handle:
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            src_id = int(parts[0]) - 1
+            dst_id = int(parts[1]) - 1
+            if src_id < 0 or dst_id < 0 or src_id == dst_id:
+                continue
+            outdeg[src_id] = outdeg.get(src_id, 0) + 1
+    if not outdeg:
+        return 0
+    return max(outdeg, key=lambda vertex: (outdeg[vertex], vertex))
 
 
 def pick_source_from_edgelist(edgelist: Path) -> int:
