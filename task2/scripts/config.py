@@ -30,9 +30,17 @@ def _cpu_count() -> int:
     return os.cpu_count() or 1
 
 
-# Powers of two used on the task1 stand (i5-1135G7, 8 threads, 40 GiB).
-STAND_NODE_COUNTS = (1, 2, 4, 8)
+# Stand curve: powers of two up to the honest fill, then one milder
+# oversubscribe point. i5-1135G7 is 4 cores / 8 threads. OpenMPI counts
+# cores as slots unless mpirun gets --use-hwthread-cpus (see run.py).
+# P=4 = 4 compute + 4 Gluon comm = 8 HW threads (honest).
+# P=6 = 12 software threads on 8 HW threads — oversubscribed, but not 16.
+STAND_NODE_COUNTS = (1, 2, 4, 6)
 STAND_TIMEOUT_SEC = 21600  # 6 h per DistBench process; Orkut TC can be long
+# DistBFS/DistSSSP default cap is 1000; road_central diameter is 2614.
+BFS_SSSP_MAX_ITERATIONS = 10000
+# Hit the old default cap → resume must redo the point after raising the limit.
+BFS_SSSP_DEFAULT_CAP = 1000
 
 
 def default_node_counts() -> list[int]:
