@@ -16,7 +16,7 @@ from util import capture, log, which
 TIME_BIN = "/usr/bin/time"
 
 
-def _source(spec: config.DatasetSpec, graph: ConvertedGraph, override: int | None) -> int:
+def resolve_source(spec: config.DatasetSpec, graph: ConvertedGraph, override: int | None = None) -> int:
     if override is not None:
         return override
     if spec.source is not None:
@@ -61,6 +61,8 @@ def build_command(
         app.append(f"-exec={config.EXEC_MODEL}")
     if algo in ("bfs", "sssp"):
         app.append(f"-startNode={source}")
+        # DistBFS/DistSSSP default is 1000; high-diameter roads/RGG need more.
+        app.append(f"-maxIterations={config.BFS_SSSP_MAX_ITERATIONS}")
     if algo == "pr":
         app.append(f"-maxIterations={config.PR_MAX_ITERATIONS}")
         app.append(f"-tolerance={config.PR_TOLERANCE}")
@@ -68,8 +70,12 @@ def build_command(
         app.append("-symmetricGraph")
 
     mpirun = which("mpirun") or "mpirun"
+    # --use-hwthread-cpus: OpenMPI slot count defaults to cores (4 on the
+    # stand), so -n 6/-n 8 die with "not enough slots". Hyperthreads give 8
+    # slots; P=6 then starts without --oversubscribe.
     return [
         mpirun,
+        "--use-hwthread-cpus",
         "-n",
         str(nodes),
         "--bind-to",
@@ -119,7 +125,7 @@ def run_once(
             "nodes": nodes,
         }
 
-    src = _source(spec, graph, source)
+    src = resolve_source(spec, graph, source)
     out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"{algo}_{graph.name}_n{nodes}"
     stat_file = out_dir / f"{stem}.stats.csv"

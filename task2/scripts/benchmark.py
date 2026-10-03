@@ -15,7 +15,7 @@ from build import build
 from convert import convert_dataset
 from datasets import ensure_mtx
 from metrics import attach_sanity, attach_scaling, scaling_table
-from run import run_once
+from run import resolve_source, run_once
 from util import collect_host_info, git_rev, log
 
 
@@ -67,12 +67,31 @@ def cmd_build(args: argparse.Namespace) -> None:
     build(force_configure=args.force)
 
 
+def _run_key(row: dict[str, Any]) -> tuple[str, str, int]:
+    return row["algo"], row["dataset"], int(row["nodes"])
+
+
+def _is_stale(row: dict[str, Any], source: int | None) -> bool:
+    """True if an existing ok row must be measured again."""
+    if row.get("status") != "ok":
+        return True
+    if row.get("algo") in ("bfs", "sssp"):
+        iters = row.get("num_iterations_median")
+        if iters is not None and iters >= config.BFS_SSSP_DEFAULT_CAP:
+            return True
+        old_source = row.get("source")
+        if source is not None and old_source is not None and int(old_source) != int(source):
+            return True
+    return False
+
+
 def cmd_prepare(args: argparse.Namespace) -> None:
     names = _dataset_names(args)
     build(force_configure=False)
+    force = bool(getattr(args, "force_convert", False))
     for name in names:
         mtx = ensure_mtx(name)
-        graph = convert_dataset(name, mtx)
+        graph = convert_dataset(name, mtx, force=force)
         log("prepare", "ready", name, graph.gr)
 
 
@@ -83,25 +102,77 @@ def cmd_run(args: argparse.Namespace) -> Path:
     nodes_list = _parse_nodes(args.nodes, profile)
     ignore_cap = _ignore_max_nodes(args)
     timeout = _timeout_sec(args)
+    resume = bool(getattr(args, "resume", False))
+    resume_from = Path(args.resume_from) if getattr(args, "resume_from", None) else None
     build(force_configure=False)
 
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
     out_dir = Path(args.output) if args.output else config.RESULTS_DIR / stamp
     out_dir.mkdir(parents=True, exist_ok=True)
-    _write_stand_info(
-        out_dir,
-        profile=profile,
-        names=names,
-        nodes_list=nodes_list,
-        timeout=timeout,
-    )
+
+    existing: dict[tuple[str, str, int], dict[str, Any]] = {}
+    created_at = stamp
+    source_report = resume_from / "report.json" if resume_from else out_dir / "report.json"
+    if (resume or resume_from) and source_report.is_file():
+        previous = json.loads(source_report.read_text())
+        created_at = previous.get("created_at", stamp)
+        for row in previous.get("runs", []):
+            existing[_run_key(row)] = row
+        log("run", "resume", f"{len(existing)} rows from", source_report)
+
+    info_path = out_dir / "stand_info.txt"
+    if not info_path.exists():
+        _write_stand_info(
+            out_dir,
+            profile=profile,
+            names=names,
+            nodes_list=nodes_list,
+            timeout=timeout,
+        )
+    else:
+        with info_path.open("a") as handle:
+            handle.write(f"resumed_at: {stamp}\n")
+            handle.write(f"nodes: {','.join(map(str, nodes_list))}\n")
 
     rows: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
+    failed_tc: set[str] = {
+        key[1]
+        for key, row in existing.items()
+        if key[0] == "tc" and row.get("status") == "error" and key[2] != 8
+    }
+
+    def flush() -> None:
+        _write_report(
+            out_dir,
+            rows=rows,
+            created_at=created_at,
+            resumed_at=stamp if (resume or resume_from) else None,
+            profile=profile,
+            ignore_cap=ignore_cap,
+            timeout=timeout,
+            names=names,
+            nodes_list=nodes_list,
+        )
+
     for name in names:
         mtx = ensure_mtx(name)
-        graph = convert_dataset(name, mtx)
+        graph = convert_dataset(name, mtx, force=name in failed_tc)
         for algo in algos:
             for nodes in nodes_list:
+                key = (algo, name, nodes)
+                prev = existing.get(key)
+                source = resolve_source(config.DATASETS[name], graph)
+                if prev and prev.get("status") == "skipped":
+                    rows.append(prev)
+                    seen.add(key)
+                    log("run", "skip", algo, name, f"n={nodes}")
+                    continue
+                if prev and not _is_stale(prev, source):
+                    rows.append(prev)
+                    seen.add(key)
+                    log("run", "skip", algo, name, f"n={nodes}")
+                    continue
                 row = run_once(
                     algo,
                     graph,
@@ -111,13 +182,41 @@ def cmd_run(args: argparse.Namespace) -> Path:
                     timeout=timeout,
                 )
                 rows.append(row)
+                seen.add(key)
                 log("run", row["status"], algo, name, f"n={nodes}")
+                flush()
 
+    for key, row in existing.items():
+        if key not in seen:
+            rows.append(row)
+
+    flush()
+    recent = config.RESULTS_DIR / "recent"
+    if recent.is_symlink() or recent.exists():
+        recent.unlink()
+    recent.symlink_to(out_dir.name)
+    log("report", "wrote", out_dir / "report.json")
+    return out_dir / "report.json"
+
+
+def _write_report(
+    out_dir: Path,
+    *,
+    rows: list[dict[str, Any]],
+    created_at: str,
+    resumed_at: str | None,
+    profile: str,
+    ignore_cap: bool,
+    timeout: int,
+    names: list[str],
+    nodes_list: list[int],
+) -> None:
     attach_scaling(rows)
     attach_sanity(rows)
     host = collect_host_info()
-    report = {
-        "created_at": stamp,
+    report: dict[str, Any] = {
+        "created_at": created_at,
+        "resumed_at": resumed_at,
         "profile": profile,
         "ignore_max_nodes": ignore_cap,
         "timeout_sec": timeout,
@@ -128,6 +227,7 @@ def cmd_run(args: argparse.Namespace) -> Path:
             "exec": config.EXEC_MODEL,
             "internal_runs": config.INTERNAL_RUNS,
             "pr_max_iterations": config.PR_MAX_ITERATIONS,
+            "bfs_sssp_max_iterations": config.BFS_SSSP_MAX_ITERATIONS,
             "node_counts": nodes_list,
         },
         "git": {
@@ -139,7 +239,10 @@ def cmd_run(args: argparse.Namespace) -> Path:
                 "Each MPI rank is one simulated node with -t=1. "
                 "GALOIS_DO_NOT_BIND_THREADS=1 is required when several ranks "
                 "share a laptop. Partition is outgoing edge-cut with BSP Sync "
-                "because Galois recommends that pair for <= 16 hosts."
+                "because Galois recommends that pair for <= 16 hosts. "
+                "mpirun --use-hwthread-cpus so OpenMPI slots follow hardware "
+                "threads (the stand has 4 cores / 8 threads). P=6 is a milder "
+                "oversubscribe point than P=8."
             ),
             "metrics": (
                 "Kernel time is Galois Timer_i after dropping the first run as "
@@ -148,23 +251,18 @@ def cmd_run(args: argparse.Namespace) -> Path:
                 "not mistaken for algorithm scaling. HostValues give imbalance. "
                 "Gluon ReduceSendBytes/ReduceNumMessages (kernel region only, "
                 "warmup dropped) show when scaling hits communication. "
-                "PageRank uses a fixed iteration cap so work does not change with p."
+                "PageRank uses a fixed iteration cap so work does not change with p. "
+                "BFS/SSSP pass -maxIterations=10000 so high-diameter graphs "
+                "are not cut off at the DistBench default of 1000."
             ),
             "datasets": {name: config.DATASETS[name].why for name in names},
         },
         "runs": rows,
         "scaling": scaling_table(rows),
     }
-    report_path = out_dir / "report.json"
-    report_path.write_text(json.dumps(report, indent=2))
+    (out_dir / "report.json").write_text(json.dumps(report, indent=2))
     _write_markdown(out_dir / "report.md", report)
     _write_handoff(out_dir, report)
-    recent = config.RESULTS_DIR / "recent"
-    if recent.is_symlink() or recent.exists():
-        recent.unlink()
-    recent.symlink_to(out_dir.name)
-    log("report", "wrote", report_path)
-    return report_path
 
 
 def _write_stand_info(
@@ -319,6 +417,15 @@ def _add_run_flags(parser: argparse.ArgumentParser) -> None:
         help="do not skip runs above DatasetSpec.max_nodes (laptop safety cap)",
     )
     parser.add_argument("--timeout", type=int, help="seconds per DistBench process")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="skip ok points already in --output/report.json; redo errors and stale rows",
+    )
+    parser.add_argument(
+        "--resume-from",
+        help="load an existing report.json and continue into --output",
+    )
 
 
 def main() -> None:
@@ -332,6 +439,11 @@ def main() -> None:
     p_prep = sub.add_parser("prepare", help="download MTX and convert to .gr")
     p_prep.add_argument("--dataset", help="comma-separated names, or all / large / default")
     p_prep.add_argument("--profile", choices=("laptop", "stand"), default="laptop")
+    p_prep.add_argument(
+        "--force-convert",
+        action="store_true",
+        help="rebuild .sgr even if it already exists",
+    )
     p_prep.set_defaults(func=cmd_prepare)
 
     p_run = sub.add_parser("run", help="run the scaling sweep")

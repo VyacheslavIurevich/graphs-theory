@@ -5,10 +5,11 @@
 #   bash task2/scripts/run_stand.sh
 #
 # Optional env:
-#   TASK2_NODES=1,2,4          # default 1,2,4,8
+#   TASK2_NODES=1,2,4,6        # default; P=6 needs --use-hwthread-cpus (in run.py)
 #   TASK2_DATASETS=all         # or large / default / comma-separated names
 #   TASK2_TIMEOUT=21600        # seconds per DistBench process
 #   TASK2_OUTPUT=/path         # results directory
+#   TASK2_RESUME=1             # skip ok points in TASK2_OUTPUT/report.json
 #
 # Copy the printed results directory back for analysis.
 
@@ -29,19 +30,27 @@ STAMP="$(date -u +%Y%m%d-%H%M%S)"
 OUT="${TASK2_OUTPUT:-$TASK2/results/stand-$STAMP}"
 mkdir -p "$OUT"
 
-NODES="${TASK2_NODES:-1,2,4,8}"
+NODES="${TASK2_NODES:-1,2,4,6}"
 DATASETS="${TASK2_DATASETS:-all}"
 TIMEOUT="${TASK2_TIMEOUT:-21600}"
+RESUME_FLAG=()
+if [[ "${TASK2_RESUME:-}" == "1" || "${TASK2_RESUME:-}" == "yes" ]]; then
+  RESUME_FLAG=(--resume)
+elif [[ -f "$OUT/report.json" && "${TASK2_RESUME:-}" != "0" ]]; then
+  # Continuing into an existing stand dir: do not redo 1/2/4 by accident.
+  RESUME_FLAG=(--resume)
+fi
 
 echo "[run_stand] task2=$TASK2"
 echo "[run_stand] output=$OUT"
-echo "[run_stand] datasets=$DATASETS nodes=$NODES timeout=$TIMEOUT"
+echo "[run_stand] datasets=$DATASETS nodes=$NODES timeout=$TIMEOUT resume=${RESUME_FLAG[*]:-no}"
 echo "[run_stand] log=$OUT/console.log"
 
 {
   echo "===== run_stand $STAMP ====="
   echo "repo=$REPO"
   echo "task2=$TASK2"
+  echo "nodes=$NODES resume=${RESUME_FLAG[*]:-no}"
   date -u
   nproc || true
   free -h || true
@@ -72,6 +81,7 @@ python3 scripts/benchmark.py run \
   --nodes "$NODES" \
   --timeout "$TIMEOUT" \
   --output "$OUT" \
+  "${RESUME_FLAG[@]}" \
   2>&1 | tee -a "$OUT/console.log"
 RUN_RC=${PIPESTATUS[0]}
 
