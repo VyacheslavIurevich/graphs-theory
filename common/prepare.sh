@@ -25,20 +25,24 @@ fi
 
 if [ "$ACTION" == "setup" ]; then
   echo "=== 1. Stopping background services and disabling Swap ==="
-  # Disable interrupt balancing across cores
+  # Stop irqbalance so the kernel does not keep moving IRQs between CPUs.
   systemctl stop irqbalance 2>/dev/null || true
-  # Disable Intel thermal daemon to prevent frequency throttling
+  # Stop thermald so it does not apply extra thermal policy during the run.
   systemctl stop thermald 2>/dev/null || true
-  # Disable swap memory
+  # Disable swap to avoid paging latency during measurements.
   swapoff -a
   echo "   Services irqbalance and thermald stopped. Swap disabled."
 
-  echo "=== 2. Tuning CPU via pyperf (Turbo Boost, C-states, ASLR, Governor) ==="
+  # pyperf system tune: performance governor, min freq = max freq,
+  # disable Turbo Boost, keep full ASLR, stop irqbalance, cap perf
+  # sample rate at 1 Hz. It does not disable C-states or ASLR.
+  echo "=== 2. Tuning CPU via pyperf ==="
   "$UVX_BIN" pyperf system tune
 
-  echo "=== 3. Configuring kernel perf event permissions ==="
+  echo "=== 3. Relaxing perf restrictions and freeing the PMU ==="
   sysctl -w kernel.perf_event_paranoid=-1
   sysctl -w kernel.kptr_restrict=0
+  # NMI watchdog uses PMU counters and contends with perf.
   sysctl -w kernel.nmi_watchdog=0
 
   echo "=== 4. Locking Intel Iris Xe GPU frequency ==="
@@ -52,17 +56,17 @@ if [ "$ACTION" == "setup" ]; then
     echo "   [Warning] Path $GPU_PATH not found. Skipping GPU frequency configuration."
   fi
 
-  echo "=== 5. Flushing all caches (OS, RAM, and CPU L1/L2/L3) ==="
-  # 1. Flush OS disk cache (PageCache, dentries, inodes)
+  echo "=== 5. Dropping OS page cache and compacting memory ==="
+  # Drop page cache, dentries, and inodes. This does not flush CPU caches.
   sync
   echo 3 >/proc/sys/vm/drop_caches
 
-  # 2. Compact RAM
   echo 1 >/proc/sys/vm/compact_memory 2>/dev/null || true
 
-  # 3. Evict CPU L1/L2/L3 cache (overwrite 32 MB in RAM to flush 8 MB L3 cache of i5-1135G7)
+  # Best-effort pollution of CPU caches by touching 32 MB; not a guaranteed
+  # L1/L2/L3 flush.
   python3 -c 'b = bytearray(32 * 1024 * 1024); b[:] = b"\x00" * len(b)' 2>/dev/null || true
-  echo "   OS disk cache flushed, RAM compacted, CPU cache evicted."
+  echo "   Page cache dropped, memory compacted, CPU caches polluted best-effort."
 
   echo ""
   echo "========================================================================="
@@ -75,7 +79,7 @@ elif [ "$ACTION" == "restore" ]; then
   echo "=== 1. Resetting CPU settings via pyperf ==="
   "$UVX_BIN" pyperf system reset
 
-  echo "=== 2. Restoring perf security restrictions ==="
+  echo "=== 2. Restoring perf sysctl defaults ==="
   sysctl -w kernel.perf_event_paranoid=2
   sysctl -w kernel.kptr_restrict=1
   sysctl -w kernel.nmi_watchdog=1
