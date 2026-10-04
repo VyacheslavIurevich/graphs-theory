@@ -16,7 +16,9 @@ from util import capture, log, which
 TIME_BIN = "/usr/bin/time"
 
 
-def resolve_source(spec: config.DatasetSpec, graph: ConvertedGraph, override: int | None = None) -> int:
+def resolve_source(
+    spec: config.DatasetSpec, graph: ConvertedGraph, override: int | None = None
+) -> int:
     if override is not None:
         return override
     if spec.source is not None:
