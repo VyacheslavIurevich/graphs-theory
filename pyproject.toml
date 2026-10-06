@@ -1,6 +1,3 @@
-[tool.uv.workspace]
-members = ["task1"]
-
 # Git submodules (spla-bench, Galois, …) are third-party; never lint them.
 [tool.ruff]
 target-version = "py310"
