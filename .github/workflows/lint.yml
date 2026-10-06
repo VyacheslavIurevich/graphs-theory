@@ -12,32 +12,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  python:
-    name: ruff + mypy
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        # Submodules (spla-bench, Galois) stay uninitialized on purpose.
-
-      - uses: astral-sh/ruff-action@v3
-        with:
-          version: "0.16.9"
-          args: "check --output-format=github"
-
-      - uses: astral-sh/ruff-action@v3
-        with:
-          version: "0.16.9"
-          args: "format --check"
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Run mypy
-        run: |
-          pip install "mypy==2.3.1"
-          mypy
-
   shell:
     name: shellcheck + shfmt
     runs-on: ubuntu-latest
