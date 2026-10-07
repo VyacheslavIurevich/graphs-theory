@@ -1,0 +1,6 @@
+# Benchmark dumps. Keep the writeup.
+results/*
+!results/README.md
+
+# Older dump copies
+results_old/
