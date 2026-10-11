@@ -30,14 +30,16 @@ def _cpu_count() -> int:
     return os.cpu_count() or 1
 
 
-# Stand curve: powers of two up to the honest fill, then one milder
-# oversubscribe point. i5-1135G7 is 4 cores / 8 threads. OpenMPI counts
-# cores as slots unless mpirun gets --use-hwthread-cpus (see run.py).
-# P=4 = 4 compute + 4 Gluon comm = 8 HW threads (honest).
-# P=6 = 12 software threads on 8 HW threads — oversubscribed, but not 16.
-STAND_NODE_COUNTS = (1, 2, 4, 6)
-STAND_TIMEOUT_SEC = 21600  # 6 h per DistBench process; Orkut TC can be long
-# DistBFS/DistSSSP default cap is 1000; road_central diameter is 2614.
+# Full-run curve on i5-1135G7 (4 cores / 8 threads, ~40 GiB).
+# OpenMPI counts cores as slots unless mpirun gets --use-hwthread-cpus.
+# P=4 = 4 compute + 4 Gluon comm = 8 HW threads (honest fill).
+# P=8 = 16 software threads on 8 HW threads. MPI slots match (8), so the
+# run starts; the oversubscribe is the extra Gluon thread per rank.
+FULL_NODE_COUNTS = (1, 2, 4, 8)
+# 4 h per DistBench process. After dropping Orkut the longest point is
+# coPapersDBLP TC, about 25 min of kernel at P=1 for 22 runs.
+FULL_TIMEOUT_SEC = 14400
+# DistBFS/DistSSSP default cap is 1000. belgium_osm already needs ~800 rounds.
 BFS_SSSP_MAX_ITERATIONS = 10000
 # Hit the old default cap → resume must redo the point after raising the limit.
 BFS_SSSP_DEFAULT_CAP = 1000
@@ -56,9 +58,9 @@ def default_node_counts() -> list[int]:
     return counts
 
 
-def stand_node_counts() -> list[int]:
+def full_node_counts() -> list[int]:
     n = _cpu_count()
-    counts = [p for p in STAND_NODE_COUNTS if p <= n]
+    counts = [p for p in FULL_NODE_COUNTS if p <= n]
     if not counts:
         counts = [1]
     if n not in counts:
@@ -235,61 +237,12 @@ DATASETS: dict[str, DatasetSpec] = {
         source=None,
         max_nodes=2,
     ),
-    "com-Orkut": DatasetSpec(
-        name="com-Orkut",
-        directed=False,
-        vertices=3_072_441,
-        edges=117_185_083,
-        nnz=234_370_166,
-        family="social",
-        why=(
-            "Largest undirected social graph from task1. Extreme degree "
-            "skew (max degree ~33k) is the stress test for TC and for "
-            "edge-cut imbalance. Needs a machine with tens of GB of RAM."
-        ),
-        min_ram_gb=16.0,
-        default=False,
-        tc=True,
-        source=None,
-        max_nodes=2,
-    ),
-    "rgg_n_2_23_s0": DatasetSpec(
-        name="rgg_n_2_23_s0",
-        directed=False,
-        vertices=8_388_608,
-        edges=63_501_393,
-        nnz=127_002_786,
-        family="geometric",
-        why=(
-            "Same RGG family as rgg_n_2_22_s0, twice as many vertices. "
-            "Used only on a large-memory host to check that geometric "
-            "locality still scales when the graph no longer fits in cache."
-        ),
-        min_ram_gb=12.0,
-        default=False,
-        tc=True,
-        source=None,
-        max_nodes=2,
-    ),
-    "road_central": DatasetSpec(
-        name="road_central",
-        directed=False,
-        vertices=14_081_816,
-        edges=16_933_413,
-        nnz=33_866_826,
-        family="road",
-        why=(
-            "Largest road network from task1: huge vertex count, low degree. "
-            "Many BFS rounds on a sparse cut. Optional; memory-bound on "
-            "this laptop."
-        ),
-        min_ram_gb=10.0,
-        default=False,
-        tc=True,
-        source=4,
-        max_nodes=2,
-    ),
 }
+
+# Dropped from this run, hours are the 22-run × P=1,2,4,8 estimate:
+# rgg_n_2_23_s0 — same locality as rgg_n_2_22_s0, ~13 h; BFS/SSSP hit 1000 rounds.
+# road_central — same diameter story as belgium_osm, ~12 h; BFS/SSSP hit 1000 rounds.
+# com-Orkut — extreme degree skew and the long TC, ~21 h. coPapersDBLP keeps TC.
 
 # Present in task1 DATASET_URL but not in the default experiment:
 # hollywood-2009 — undirected; dropped in task1 because LAGraph BFS crashed.
@@ -360,7 +313,7 @@ ALGORITHMS: dict[str, AlgorithmSpec] = {
 PARTITION = "oec"
 EXEC_MODEL = "Sync"
 THREADS_PER_RANK = 1
-INTERNAL_RUNS = 4  # Timer_0 warmup, Timer_1..3 measured
+INTERNAL_RUNS = 22  # Timer_0 warmup, Timer_1..21 measured
 PR_MAX_ITERATIONS = 20
 PR_TOLERANCE = 1e-12  # effectively force the iteration cap
 TIMEOUT_SEC = 1800
