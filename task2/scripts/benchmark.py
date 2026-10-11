@@ -34,8 +34,8 @@ def _parse_list(value: str | None, fallback: Iterable[str]) -> list[str]:
 def _parse_nodes(value: str | None, profile: str) -> list[int]:
     if value:
         return [int(item) for item in value.split(",") if item.strip()]
-    if profile == "stand":
-        return config.stand_node_counts()
+    if profile == "full":
+        return config.full_node_counts()
     return config.default_node_counts()
 
 
@@ -43,7 +43,7 @@ def _dataset_names(args: argparse.Namespace) -> list[str]:
     profile = getattr(args, "profile", "laptop")
     fallback = (
         [d.name for d in config.all_datasets()]
-        if profile == "stand"
+        if profile == "full"
         else [d.name for d in config.default_datasets()]
     )
     return _parse_list(getattr(args, "dataset", None), fallback)
@@ -52,14 +52,14 @@ def _dataset_names(args: argparse.Namespace) -> list[str]:
 def _ignore_max_nodes(args: argparse.Namespace) -> bool:
     if getattr(args, "ignore_max_nodes", False):
         return True
-    return getattr(args, "profile", "laptop") == "stand"
+    return getattr(args, "profile", "laptop") == "full"
 
 
 def _timeout_sec(args: argparse.Namespace) -> int:
     if getattr(args, "timeout", None):
         return int(args.timeout)
-    if getattr(args, "profile", "laptop") == "stand":
-        return config.STAND_TIMEOUT_SEC
+    if getattr(args, "profile", "laptop") == "full":
+        return config.FULL_TIMEOUT_SEC
     return config.TIMEOUT_SEC
 
 
@@ -74,6 +74,9 @@ def _run_key(row: dict[str, Any]) -> tuple[str, str, int]:
 def _is_stale(row: dict[str, Any], source: int | None) -> bool:
     """True if an existing ok row must be measured again."""
     if row.get("status") != "ok":
+        return True
+    measured = row.get("kernel_ms")
+    if not isinstance(measured, list) or len(measured) < config.INTERNAL_RUNS - 1:
         return True
     if row.get("algo") in ("bfs", "sssp"):
         iters = row.get("num_iterations_median")
@@ -120,9 +123,9 @@ def cmd_run(args: argparse.Namespace) -> Path:
             existing[_run_key(row)] = row
         log("run", "resume", f"{len(existing)} rows from", source_report)
 
-    info_path = out_dir / "stand_info.txt"
+    info_path = out_dir / "host_info.txt"
     if not info_path.exists():
-        _write_stand_info(
+        _write_host_info(
             out_dir,
             profile=profile,
             names=names,
@@ -240,9 +243,11 @@ def _write_report(
                 "GALOIS_DO_NOT_BIND_THREADS=1 is required when several ranks "
                 "share a laptop. Partition is outgoing edge-cut with BSP Sync "
                 "because Galois recommends that pair for <= 16 hosts. "
-                "mpirun --use-hwthread-cpus so OpenMPI slots follow hardware "
-                "threads (the stand has 4 cores / 8 threads). P=6 is a milder "
-                "oversubscribe point than P=8."
+                "mpirun --use-hwthread-cpus --oversubscribe so OpenMPI slots "
+                "follow hardware threads (i5-1135G7 has 4 cores / 8 threads) "
+                "and P=8 still starts if a build counts only cores. "
+                "P=4 fills 8 HW threads. P=8 oversubscribes them "
+                "(16 software threads)."
             ),
             "metrics": (
                 "Kernel time is Galois Timer_i after dropping the first run as "
@@ -265,7 +270,7 @@ def _write_report(
     _write_handoff(out_dir, report)
 
 
-def _write_stand_info(
+def _write_host_info(
     out_dir: Path,
     *,
     profile: str,
@@ -292,7 +297,7 @@ def _write_stand_info(
         f"galois: {git_rev(config.GALOIS_SRC)}",
         "",
     ]
-    (out_dir / "stand_info.txt").write_text("\n".join(lines))
+    (out_dir / "host_info.txt").write_text("\n".join(lines))
 
 
 def _write_handoff(out_dir: Path, report: dict[str, Any]) -> None:
@@ -306,8 +311,8 @@ def _write_handoff(out_dir: Path, report: dict[str, Any]) -> None:
 Минимум, без которого нельзя разобрать прогон:
   report.json
   report.md
-  stand_info.txt
-  console.log          (если запускали scripts/run_stand.sh)
+  host_info.txt
+  console.log          (если запускали scripts/run.sh)
   runs/*.log
   runs/*.stats.csv
 
@@ -407,9 +412,9 @@ def _add_run_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--output", help="results directory")
     parser.add_argument(
         "--profile",
-        choices=("laptop", "stand"),
+        choices=("laptop", "full"),
         default="laptop",
-        help="laptop = default graphs; stand = all graphs, ignore max_nodes, 6h timeout",
+        help="laptop = default graphs; full = all graphs, ignore max_nodes, 4h timeout",
     )
     parser.add_argument(
         "--ignore-max-nodes",
@@ -438,7 +443,7 @@ def main() -> None:
 
     p_prep = sub.add_parser("prepare", help="download MTX and convert to .gr")
     p_prep.add_argument("--dataset", help="comma-separated names, or all / large / default")
-    p_prep.add_argument("--profile", choices=("laptop", "stand"), default="laptop")
+    p_prep.add_argument("--profile", choices=("laptop", "full"), default="laptop")
     p_prep.add_argument(
         "--force-convert",
         action="store_true",

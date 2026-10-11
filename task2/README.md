@@ -9,24 +9,24 @@
 
 ---
 
-## Прогон на стенде task1 (то, что нужно сделать)
+## Полный прогон (то, что нужно сделать)
 
-Стенд из `task1/results/README.md`: Intel Core i5-1135G7, 4 ядра / 8 потоков,
+Машина из `task1/results/README.md`: Intel Core i5-1135G7, 4 ядра / 8 потоков,
 **40 ГБ RAM**. На ноутбуке (~8 ГБ) полный набор не гонять.
 
 ```bash
 # из корня репозитория
 git submodule update --init task2/deps/Galois
 cd task2
-bash scripts/run_stand.sh
+bash scripts/run.sh
 ```
 
-Долго: сборка + конвертация Orkut/RGG + все алгоритмы на 1,2,4,6 рангах.
+Долго: сборка + конвертация RGG и LiveJournal + все алгоритмы на 1,2,4,8 рангах.
 Имеет смысл в `tmux`/`screen` или через `nohup`:
 
 ```bash
 cd task2
-nohup bash scripts/run_stand.sh > /tmp/task2-stand.out 2>&1 &
+nohup bash scripts/run.sh > /tmp/task2.out 2>&1 &
 ```
 
 Досъём в уже привезённый каталог (не гоняет заново валидные 1/2/4):
@@ -34,27 +34,27 @@ nohup bash scripts/run_stand.sh > /tmp/task2-stand.out 2>&1 &
 ```bash
 cd task2
 TASK2_OUTPUT=results/stand-20260930-174954 TASK2_RESUME=1 \
-  nohup bash scripts/run_stand.sh > /tmp/task2-stand-resume.out 2>&1 &
+  nohup bash scripts/run.sh > /tmp/task2-resume.out 2>&1 &
 ```
 
 Переменные, если нужно сузить прогон:
 
 | Переменная | По умолчанию | Пример |
 |---|---|---|
-| `TASK2_NODES` | `1,2,4,6` | `1,2,4` — только честные слоты |
-| `TASK2_DATASETS` | `all` | `large` или `belgium_osm,com-Orkut` |
-| `TASK2_TIMEOUT` | `21600` (6 ч на один процесс) | `7200` |
-| `TASK2_OUTPUT` | `results/stand-<UTC>` | `/data/task2-out` |
+| `TASK2_NODES` | `1,2,4,8` | `1,2,4` — только честное заполнение |
+| `TASK2_DATASETS` | `all` | `large` или `belgium_osm,coPapersDBLP` |
+| `TASK2_TIMEOUT` | `14400` (4 ч на один процесс) | `7200` |
+| `TASK2_OUTPUT` | `results/<UTC>` | `/data/task2-out` |
 | `TASK2_RESUME` | авто, если в OUTPUT уже есть `report.json` | `1` принудительно, `0` с нуля |
 
 Эквивалент без shell-обёртки:
 
 ```bash
-python3 scripts/benchmark.py run --profile stand --dataset all --nodes 1,2,4,6 \
+python3 scripts/benchmark.py run --profile full --dataset all --nodes 1,2,4,8 \
   --output results/stand-20260930-174954 --resume
 ```
 
-`--profile stand` включает все графы из config, снимает ноутбучный
+`--profile full` включает все графы из config, снимает ноутбучный
 `max_nodes` и ставит длинный таймаут. TC на орграфах скрипт skip'ает сам.
 
 ### Что отдать обратно
@@ -62,16 +62,16 @@ python3 scripts/benchmark.py run --profile stand --dataset all --nodes 1,2,4,6 \
 Весь каталог, который скрипт напечатает в конце (он же `WHAT_TO_SEND.txt`):
 
 ```
-task2/results/stand-<timestamp>/
+task2/results/<timestamp>/
   report.json          # все метрики, команды, sanity
   report.md            # таблица scaling
-  stand_info.txt       # CPU / RAM / git rev / список графов
+  host_info.txt        # CPU / RAM / git rev / список графов
   console.log          # полный stdout
   runs/*.log
   runs/*.stats.csv
 ```
 
-Без `report.json` + `stand_info.txt` + логов разбор почти бесполезен.
+Без `report.json` + `host_info.txt` + логов разбор почти бесполезен.
 Симлинк `results/recent` указывает на последний запуск — его копировать
 не обязательно, он относительный.
 
@@ -84,20 +84,22 @@ task2/results/stand-<timestamp>/
 
 | Параметр | Значение | Зачем |
 |---|---|---|
-| `mpirun --use-hwthread-cpus -n P --bind-to none` | P процессов на localhost | P имитируемых узлов; слоты = гиперпотоки, иначе OpenMPI видит 4 ядра и отказывается стартовать P=6 |
+| `mpirun --use-hwthread-cpus --oversubscribe -n P --bind-to none` | P процессов на localhost | слоты = гиперпотоки; `--oversubscribe` нужен, если OpenMPI всё ещё видит 4 ядра и отказывается стартовать P=8 |
 | `-t=1` | один compute-поток на ранг | плюс внутренний communication thread Gluon |
 | `GALOIS_DO_NOT_BIND_THREADS=1` | обязательно | иначе Galois биндит потоки и они дерутся с MPI |
 | `-partition=oec` | outgoing edge-cut | рекомендация Galois для ≤16 хостов |
 | `-exec=Sync` | BSP | одинаковое число раундов на всех P |
-| `-runs=4` | 1 warmup + 3 замера | `Timer_0` отбрасывается |
+| `-runs=22` | 1 warmup + 21 замер | `Timer_0` отбрасывается, в отчёт идёт медиана |
 
 Это **не** shared-memory Galois с `-t=P`.
 
-На стенде 8 потоков: каждый ранг занимает compute+comm, поэтому **P=4
-заполняет машину честно**. P=6 — мягкий oversubscribe (12 программных
-потоков на 8 аппаратных), точка за честным потолком. P=8 не снимаем:
-16 потоков на 8 аппаратных и OpenMPI без `--use-hwthread-cpus` даже не
-стартует. См. [`LARGE_GRAPHS.md`](LARGE_GRAPHS.md).
+На i5-1135G7 8 потоков: каждый ранг занимает compute+comm, поэтому **P=4
+заполняет машину честно**. P=8 — 16 программных потоков на 8 аппаратных.
+MPI при `--use-hwthread-cpus` видит 8 слотов, так что `-n 8` стартует, а
+`--oversubscribe` страхует сборку, которая всё ещё считает слотами ядра.
+Это не восемь отдельных узлов; в отчёте P=4 остаётся честным потолком.
+Памяти на прошлом прогоне хватило: пик одного процесса около 3.9 ГБ
+(Orkut SSSP, P=1), на P=4 уже около 1.2 ГБ. На 40 ГБ P=8 помещается.
 
 ---
 
@@ -130,9 +132,13 @@ TC только на неориентированных (`-symmetricGraph`). О�
 | `amazon-2008` | орграф, исключённый в task1 из-за симметризации spla |
 | `belgium_osm` | дорожная сеть большого диаметра, узкий BFS/SSSP |
 
-**Большие (включаются `--profile stand` / `run_stand.sh`):**
+**Большие (включаются `--profile full` / `run.sh`):**
 `coPapersDBLP`, `roadNet-CA`, `cit-Patents`, `rgg_n_2_22_s0`,
-`soc-LiveJournal1`, `com-Orkut`, `rgg_n_2_23_s0`, `road_central`.
+`soc-LiveJournal1`.
+
+В прогон не входят `rgg_n_2_23_s0` и `road_central` (та же семья, что у
+`rgg_n_2_22_s0` и `belgium_osm`; BFS/SSSP там не сошлись за 1000 раундов)
+и `com-Orkut` (крайний перекос степеней; TC остаётся на `coPapersDBLP`).
 
 Как включить выборочно и что значит `max_nodes` — [`LARGE_GRAPHS.md`](LARGE_GRAPHS.md).
 Обоснование каждого графа — `DatasetSpec.why` в `scripts/config.py`.
@@ -183,7 +189,7 @@ python3 scripts/benchmark.py prepare --dataset all
 
 Cursor AppImage выставляет `APPDIR` — CMake тогда ищет модули внутри
 AppImage и падает с `Could not find CMAKE_ROOT`. `scripts/util.py` снимает
-`APPDIR`/`APPIMAGE` и чистит `LD_LIBRARY_PATH`. `run_stand.sh` делает то же.
+`APPDIR`/`APPIMAGE` и чистит `LD_LIBRARY_PATH`. `run.sh` делает то же.
 
 OpenMPI `--version` на части машин печатает ошибку help-файлов; `mpirun -n`
 при этом работает.
@@ -200,7 +206,7 @@ OpenMPI `--version` на части машин печатает ошибку hel
 - TC: `.cgr` без петель/мультирёбер, копия в `.sgr` (`gr2sgr` нельзя —
   рёбра уже двунаправленные)
 
-Текстовые `.el`/`.wel` после конвертации удаляются, чтобы Orkut не забил диск.
+Текстовые `.el`/`.wel` после конвертации удаляются, чтобы большие графы не забили диск.
 
 ---
 
@@ -208,8 +214,8 @@ OpenMPI `--version` на части машин печатает ошибку hel
 
 Intel Core i5-1235U, 10c/12t. Default-sweep `coAuthorsCiteseer`,
 `amazon-2008`, `belgium_osm` на 1,2,4,8 рангах лежит в
-`results/20260930-132349/`. Это **не** стенд task1 и не замена полному
-прогону: на 8 рангах ноутбук oversubscribe, большие графы не влезают.
+`results/20260930-132349/`. Это не замена полному прогону на машине
+с 40 ГБ: на 8 рангах ноутбук oversubscribe, большие графы не влезают.
 
 ```bash
 python3 scripts/benchmark.py run --algo bfs --dataset coAuthorsCiteseer --nodes 1,2

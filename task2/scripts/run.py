@@ -72,12 +72,15 @@ def build_command(
         app.append("-symmetricGraph")
 
     mpirun = which("mpirun") or "mpirun"
-    # --use-hwthread-cpus: OpenMPI slot count defaults to cores (4 on the
-    # stand), so -n 6/-n 8 die with "not enough slots". Hyperthreads give 8
-    # slots; P=6 then starts without --oversubscribe.
+    # --use-hwthread-cpus: slot count defaults to cores (4 on i5-1135G7),
+    # so -n 8 dies with "not enough slots". Hyperthreads give 8 slots, and
+    # P=8 fills them. --oversubscribe is the fallback if a build still
+    # counts only cores. Gluon adds a second thread per rank, so P=8 is
+    # 16 software threads on 8 HW threads.
     return [
         mpirun,
         "--use-hwthread-cpus",
+        "--oversubscribe",
         "-n",
         str(nodes),
         "--bind-to",
