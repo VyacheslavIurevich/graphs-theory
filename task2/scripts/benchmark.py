@@ -267,7 +267,6 @@ def _write_report(
     }
     (out_dir / "report.json").write_text(json.dumps(report, indent=2))
     _write_markdown(out_dir / "report.md", report)
-    _write_handoff(out_dir, report)
 
 
 def _write_host_info(
@@ -298,27 +297,6 @@ def _write_host_info(
         "",
     ]
     (out_dir / "host_info.txt").write_text("\n".join(lines))
-
-
-def _write_handoff(out_dir: Path, report: dict[str, Any]) -> None:
-    ok = sum(1 for r in report["runs"] if r.get("status") == "ok")
-    err = sum(1 for r in report["runs"] if r.get("status") in ("error", "timeout"))
-    skipped = sum(1 for r in report["runs"] if r.get("status") == "skipped")
-    text = f"""Отдайте весь этот каталог целиком:
-
-  {out_dir}
-
-Минимум, без которого нельзя разобрать прогон:
-  report.json
-  report.md
-  host_info.txt
-  console.log          (если запускали scripts/run.sh)
-  runs/*.log
-  runs/*.stats.csv
-
-Сводка: ok={ok} error/timeout={err} skipped={skipped}
-"""
-    (out_dir / "WHAT_TO_SEND.txt").write_text(text)
 
 
 def _fmt_metric(value: object, digits: int = 3) -> str:

@@ -57,23 +57,20 @@ python3 scripts/benchmark.py run --profile full --dataset all --nodes 1,2,4,8 \
 `--profile full` включает все графы из config, снимает ноутбучный
 `max_nodes` и ставит длинный таймаут. TC на орграфах скрипт skip'ает сам.
 
-### Что отдать обратно
+### Результаты
 
-Весь каталог, который скрипт напечатает в конце (он же `WHAT_TO_SEND.txt`):
+Каталог `task2/results/<timestamp>/`:
 
 ```
-task2/results/<timestamp>/
-  report.json          # все метрики, команды, sanity
+  report.json          # метрики, команды, sanity
   report.md            # таблица scaling
   host_info.txt        # CPU / RAM / git rev / список графов
-  console.log          # полный stdout
+  console.log          # полный stdout (если запускали scripts/run.sh)
   runs/*.log
   runs/*.stats.csv
 ```
 
-Без `report.json` + `host_info.txt` + логов разбор почти бесполезен.
-Симлинк `results/recent` указывает на последний запуск — его копировать
-не обязательно, он относительный.
+Симлинк `results/recent` указывает на последний запуск.
 
 Один упавший граф не останавливает остальные: статус `error`/`timeout`
 попадёт в JSON, прогон идёт дальше.
