@@ -11,8 +11,6 @@
 #   TASK2_OUTPUT=/path         # results directory
 #   TASK2_RESUME=1             # skip ok points in TASK2_OUTPUT/report.json
 #
-# Copy the printed results directory back for analysis.
-
 set -uo pipefail
 
 TASK2="$(cd "$(dirname "$0")/.." && pwd)"
@@ -87,8 +85,5 @@ RUN_RC=${PIPESTATUS[0]}
 
 echo
 echo "[task2] finished rc=$RUN_RC"
-echo "[task2] Отдайте целиком каталог:"
-echo "  $OUT"
-echo "Внутри должны быть report.json, report.md, host_info.txt,"
-echo "console.log, WHAT_TO_SEND.txt и runs/."
+echo "[task2] results: $OUT"
 exit "$RUN_RC"
