@@ -239,7 +239,7 @@ DATASETS: dict[str, DatasetSpec] = {
     ),
 }
 
-# Dropped from this run, hours are the 22-run × P=1,2,4,8 estimate:
+# Dropped from this run, hours are the 22-run x P=1,2,4,8 estimate:
 # rgg_n_2_23_s0 — same locality as rgg_n_2_22_s0, ~13 h; BFS/SSSP hit 1000 rounds.
 # road_central — same diameter story as belgium_osm, ~12 h; BFS/SSSP hit 1000 rounds.
 # com-Orkut — extreme degree skew and the long TC, ~21 h. coPapersDBLP keeps TC.
