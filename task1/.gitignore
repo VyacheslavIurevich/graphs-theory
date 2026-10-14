@@ -1,7 +1,6 @@
-# Benchmark dumps. Keep the writeup and the batch runner.
+# Benchmark dumps. Keep the writeup.
 results/*
 !results/README.md
-!results/run_all_benchmarks.sh
 
 # Older dump copies
 results_old/
